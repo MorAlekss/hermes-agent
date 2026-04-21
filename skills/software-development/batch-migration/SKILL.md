@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [migration, refactoring, parallel, git, worktree, batch, automation]
     category: software-development
-    related_skills: [requesting-code-review, github-pr-workflow, codex]
+    related_skills: [requesting-code-review]
   requires_toolsets: [terminal]
 ---
 
