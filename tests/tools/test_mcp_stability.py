@@ -592,3 +592,48 @@ class TestBuildSafeEnvPassthrough:
             "empty dict must not be coerced to None; "
             "None would make the child inherit the full parent env"
         )
+
+    def test_run_stdio_passes_empty_env_not_none(self, monkeypatch):
+        """MCPServerTask._run_stdio forwards {} to StdioServerParameters.
+
+        Regression guard: exercises the real production call site at
+        lines 1386-1390. If line 1389 is reverted to
+        env=safe_env if safe_env else None, this test fails because
+        StdioServerParameters receives None instead of {}.
+        """
+        import tools.mcp_tool as mcp_mod
+        import asyncio
+
+        monkeypatch.setattr(os, "environ", {})
+
+        captured = {}
+
+        class _Stop(Exception):
+            pass
+
+        class FakeStdioServerParameters:
+            def __init__(self, *args, **kwargs):
+                captured["env"] = kwargs.get("env")
+                raise _Stop()
+
+        monkeypatch.setattr(
+            mcp_mod, "StdioServerParameters", FakeStdioServerParameters
+        )
+
+        server = mcp_mod.MCPServerTask("test-empty-env")
+        server._sampling = None
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                server._run_stdio({"command": "mcp-fake", "args": []})
+            )
+        except _Stop:
+            pass
+        finally:
+            loop.close()
+
+        assert captured.get("env") == {}, (
+            f"expected env={{}}, got {captured.get('env')!r}; "
+            "old ternary safe_env if safe_env else None would yield None"
+        )
