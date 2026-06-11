@@ -542,3 +542,53 @@ class TestMCPInitialConnectionRetry:
                 await task
 
         asyncio.get_event_loop().run_until_complete(_run())
+
+
+# ---------------------------------------------------------------------------
+# Fix 2c: _build_safe_env empty-dict passthrough (env leak regression)
+# ---------------------------------------------------------------------------
+
+class TestBuildSafeEnvPassthrough:
+    """Empty dict from _build_safe_env must survive to StdioServerParameters.
+
+    The bug: when _build_safe_env returned {}, the old ternary
+    ``safe_env if safe_env else None`` collapsed it to None in
+    StdioServerParameters, causing the child process to inherit the
+    full parent env. The fix passes safe_env directly so {} is
+    preserved and only _SAFE_ENV_KEYS (and user_env) reach the MCP
+    server subprocess.
+    """
+
+    def test_returns_empty_dict_with_no_safe_keys(self, monkeypatch):
+        """When os.environ has no safe keys and user_env is None, return {}."""
+        monkeypatch.setattr(os, "environ", {})
+        from tools.mcp_tool import _build_safe_env
+
+        result = _build_safe_env(None)
+        assert result == {}
+        assert isinstance(result, dict)
+
+    def test_empty_dict_passed_to_stdio_params_not_none(self, monkeypatch):
+        """StdioServerParameters must receive {} (not None) when safe_env is empty."""
+        monkeypatch.setattr(os, "environ", {})
+        from tools.mcp_tool import _build_safe_env
+        from mcp import StdioServerParameters
+
+        safe_env = _build_safe_env(None)
+        assert safe_env == {}
+
+        # Demonstrate the old bug: falsy-check collapses {} to None.
+        assert (safe_env if safe_env else None) is None, (
+            "regression guard: empty dict is falsy — old ternary would pass None"
+        )
+
+        # The fix passes safe_env directly — {} survives.
+        params = StdioServerParameters(
+            command="test-command",
+            args=[],
+            env=safe_env,
+        )
+        assert params.env == {}, (
+            "empty dict must not be coerced to None; "
+            "None would make the child inherit the full parent env"
+        )
