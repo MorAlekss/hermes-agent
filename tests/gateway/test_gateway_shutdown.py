@@ -514,7 +514,7 @@ def test_pid_exists_treats_zombie_state_as_dead_on_posix_without_proc(
         returncode=0,
         stdout="Z",
     )
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: zombie_result)
+    monkeypatch.setattr(status.subprocess, "run", lambda *args, **kwargs: zombie_result)
 
     # os.kill must NOT be called — zombie check returns before reaching it.
     kill = MagicMock()
