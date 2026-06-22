@@ -489,3 +489,36 @@ def test_pid_exists_returns_false_for_zombie_process():
         "zombie process must be reported as not existing; "
         "otherwise --replace waits 15s and aborts with exit 1"
     )
+
+
+def test_pid_exists_treats_zombie_state_as_dead_on_posix_without_proc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When /proc is absent (macOS/BSD), _pid_exists falls back to
+    ps -o state= and must return False for a zombie process (state Z)."""
+    import subprocess
+    from unittest.mock import MagicMock
+    from gateway import status
+
+    monkeypatch.setattr(status, "_IS_WINDOWS", False)
+
+    # Simulate absent /proc — triggers the FileNotFoundError handler.
+    def _raise_fnf(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(status.Path, "read_text", _raise_fnf)
+
+    # Simulate ps -o state= -p <pid> returning Z for a zombie process.
+    zombie_result = subprocess.CompletedProcess(
+        args=["ps", "-o", "state=", "-p", "42"],
+        returncode=0,
+        stdout="Z",
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: zombie_result)
+
+    # os.kill must NOT be called — zombie check returns before reaching it.
+    kill = MagicMock()
+    monkeypatch.setattr(status.os, "kill", kill)
+
+    assert status._pid_exists(42) is False
+    kill.assert_not_called()

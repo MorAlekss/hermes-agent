@@ -491,7 +491,18 @@ def _pid_exists(pid: int) -> bool:
             stat_fields = Path(f"/proc/{int(pid)}/stat").read_text(encoding="utf-8").split()
             if stat_fields[2] == "Z":
                 return False
-        except (FileNotFoundError, IndexError, PermissionError, OSError):
+        except FileNotFoundError:
+            # No /proc — try macOS/BSD ps fallback.
+            try:
+                r = subprocess.run(
+                    ["ps", "-o", "state=", "-p", str(int(pid))],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if r.returncode == 0 and r.stdout.strip() == "Z":
+                    return False
+            except Exception:
+                pass
+        except (IndexError, PermissionError, OSError):
             pass
         try:
             os.kill(int(pid), 0)  # windows-footgun: ok — POSIX-only branch (the whole point of _pid_exists)
