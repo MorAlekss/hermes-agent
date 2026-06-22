@@ -482,6 +482,16 @@ def compress_context(
         _release_lock()  # compression aborted — no rotation will happen
         return messages, _existing_sp
 
+    # If compress() returned messages unchanged without setting
+    # _last_compress_aborted (e.g. compress_start >= compress_end),
+    # there is nothing to rotate — skip session rotation entirely.
+    if len(compressed) >= _pre_msg_count:
+        _existing_sp = getattr(agent, "_cached_system_prompt", None)
+        if not _existing_sp:
+            _existing_sp = agent._build_system_prompt(system_message)
+        _release_lock()  # no-op compression — no rotation will happen
+        return messages, _existing_sp
+
     summary_error = getattr(agent.context_compressor, "_last_summary_error", None)
     if summary_error:
         if getattr(agent, "_last_compression_summary_warning", None) != summary_error:

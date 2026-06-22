@@ -248,3 +248,43 @@ class TestAntiThrashing:
         comp = _make_compressor(config_context_length=96000)
         comp.last_prompt_tokens = 10_000
         assert not comp.should_compress(10_000)
+
+
+class TestNoOpCompressionSkipsRotation:
+    """When compress() returns messages unchanged (no-op), session rotation
+    must be skipped — no end_session, no new session_id."""
+
+    def test_no_op_compression_does_not_rotate_session(self):
+        """compress_start >= compress_end path must not trigger session rotation."""
+        from unittest.mock import MagicMock
+        from agent.conversation_compression import compress_context
+
+        messages = _build_session(10, words_per_turn=10)
+
+        agent = MagicMock()
+        agent.session_id = "test-no-op-session"
+        agent.compression_in_place = False
+        agent.compression_enabled = True
+        agent._compression_feasibility_checked = True
+        agent._cached_system_prompt = "system prompt"
+        agent._memory_manager = None
+        agent._todo_store = MagicMock()
+        agent._todo_store.format_for_injection.return_value = ""
+
+        session_db = MagicMock()
+        session_db.try_acquire_compression_lock.return_value = True
+        agent._session_db = session_db
+
+        compressor = MagicMock()
+        compressor._last_compress_aborted = False
+        compressor._last_summary_error = None
+        compressor._last_aux_model_failure_model = None
+        compressor.compress.return_value = list(messages)
+        agent.context_compressor = compressor
+
+        result_messages, _ = compress_context(agent, messages, "system", approx_tokens=1000)
+
+        session_db.end_session.assert_not_called()
+        assert agent.session_id == "test-no-op-session", (
+            "Session ID must not change when compression is a no-op"
+        )
