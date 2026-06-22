@@ -495,18 +495,22 @@ def test_pid_exists_treats_zombie_state_as_dead_on_posix_without_proc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When /proc is absent (macOS/BSD), _pid_exists falls back to
-    ps -o state= and must return False for a zombie process (state Z)."""
+    ps -o state= and must return False for a zombie process (state Z).
+
+    Mocks gateway.status.Path to raise FileNotFoundError regardless of
+    platform, so the test exercises the ps fallback on both Linux and macOS.
+    """
     import subprocess
-    from unittest.mock import MagicMock
+    import builtins
+    from unittest.mock import MagicMock, patch
     from gateway import status
 
     monkeypatch.setattr(status, "_IS_WINDOWS", False)
 
-    # Simulate absent /proc — triggers the FileNotFoundError handler.
-    def _raise_fnf(*args, **kwargs):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(status.Path, "read_text", _raise_fnf)
+    # Simulate absent /proc — triggers the ps fallback in the
+    # FileNotFoundError handler.
+    fake_path = MagicMock()
+    fake_path.read_text.side_effect = FileNotFoundError
 
     # Simulate ps -o state= -p <pid> returning Z for a zombie process.
     zombie_result = subprocess.CompletedProcess(
@@ -514,11 +518,21 @@ def test_pid_exists_treats_zombie_state_as_dead_on_posix_without_proc(
         returncode=0,
         stdout="Z",
     )
-    monkeypatch.setattr(status.subprocess, "run", lambda *args, **kwargs: zombie_result)
+    monkeypatch.setattr(status.subprocess, "run", lambda *a, **kw: zombie_result)
 
     # os.kill must NOT be called — zombie check returns before reaching it.
     kill = MagicMock()
     monkeypatch.setattr(status.os, "kill", kill)
 
-    assert status._pid_exists(42) is False
-    kill.assert_not_called()
+    # Block psutil so _pid_exists exercises the hand-rolled zombie check.
+    real_import = builtins.__import__
+
+    def _no_psutil(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("psutil disabled for zombie test")
+        return real_import(name, *args, **kwargs)
+
+    with patch("gateway.status.Path", return_value=fake_path), \
+         patch.object(builtins, "__import__", _no_psutil):
+        assert status._pid_exists(42) is False
+        kill.assert_not_called()
